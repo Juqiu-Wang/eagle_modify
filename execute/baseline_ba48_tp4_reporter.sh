@@ -5,7 +5,7 @@ target_model_path="/mnt/geminihzceph1/geminicephfs/mmsearch-luban-universal/hz/g
 #draft_model_path=${ROOT_DIR}/outputs/QwQ-32B-eagle3/epoch_9
 # draft_model_path=${ROOT_DIR}/outputs/QwQ-32B-eagle3_v1/epoch_0
 # draft_model_path=${ROOT_DIR}/outputs2/QwQ-32B-eagle3_v2/epoch_0
-draft_model_path="/mnt/geminihzceph1/geminicephfs/mmsearch-luban-universal/hz/group_airesearch_1/users/juqiuwang/sglang-EAGLE3-Llama-3.1-Instruct-8B"
+draft_model_path="/mnt/geminihzceph1/geminicephfs/mmsearch-luban-universal/hz/group_airesearch_1/users/juqiuwang/model/sglang-EAGLE3-Llama-3.1-Instruct-8B"
 #config_list: batch_size, num_steps, topk, num_verify_tokens     "1,0,0,0"
 #1,0,0,0    1,1,1,2
 #    "1,2,1,3"
