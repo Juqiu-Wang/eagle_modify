@@ -60,7 +60,7 @@ epoch_num=$(basename "$draft_model_path")
 
 export SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 python3 benchmarks/bench_model_speedup.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3 python3 ../evaluation_script/sglang_eagle3.py \
     --model-path $target_model_path \
     --speculative-draft-model-path $draft_model_path \
     --port 40000 \
@@ -69,4 +69,4 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python3 benchmarks/bench_model_speedup.py \
     --tp-size $TP \
     --config-list "${config_list[@]}" \
     --benchmark-list frontier_reporter:8 \
-    --output baseline_cuda_graph/reporter_tp${TP}_ba1.jsonl 
+    --output ../../result/eagle_sglang_baseline_cuda_graph/reporter_tp${TP}_ba1.jsonl 

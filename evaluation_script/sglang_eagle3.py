@@ -189,7 +189,7 @@ def get_cmmlu_conversations(num_prompts: int):
     return bench_conversations
 
 def get_frontier_reporter_conversations(num_prompts: int):
-    json_path = '/mnt/geminisgceph1/geminicephfs/mmsearch-ai-research/users/zhiyingwu/workspace/reporter_test_datas.json'
+    json_path = '/mnt/geminihzceph1/geminicephfs/mmsearch-luban-universal/hz/group_airesearch_1/users/juqiuwang/data/reporter_test_datas.json'
     with open(json_path, 'r') as f:
         dataset = json.load(f)
     conversations = dataset['conversations'][:num_prompts]
