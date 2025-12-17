@@ -93,7 +93,7 @@ epoch_num=$(basename "$draft_model_path")
 
 export SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 python3 ../evaluation_script/sglang_eagle3.py \
+CUDA_VISIBLE_DEVICES=4,5,6,7 python3 ../evaluation_script/sglang_eagle3.py \
     --model-path $target_model_path \
     --speculative-draft-model-path $draft_model_path \
     --port 40040 \
