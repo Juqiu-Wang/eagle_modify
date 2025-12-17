@@ -6,7 +6,6 @@ target_model_path="/mnt/geminihzceph1/geminicephfs/mmsearch-luban-universal/hz/g
 # draft_model_path=${ROOT_DIR}/outputs/QwQ-32B-eagle3_v1/epoch_0
 # draft_model_path=${ROOT_DIR}/outputs2/QwQ-32B-eagle3_v2/epoch_0
 draft_model_path="/mnt/geminihzceph1/geminicephfs/mmsearch-luban-universal/hz/group_airesearch_1/users/juqiuwang/models/sglang-EAGLE3-Llama-3.1-Instruct-8B"
-
 #config_list: batch_size, num_steps, topk, num_verify_tokens     "1,0,0,0"
 #1,0,0,0    1,1,1,2
 #    "1,2,1,3"
@@ -54,7 +53,7 @@ config_list=(
     "4,7,6,32"
     "4,8,4,16"
     "4,8,6,32"
-    "4,0,0,0"
+    "8,0,0,0"
     "8,1,1,1"
     "8,1,2,2"
     "8,1,4,4"
@@ -86,7 +85,7 @@ config_list=(
     "8,7,4,16"
     "8,7,6,32"
     "8,8,4,16"
-    "8,8,6,32"    
+    "8,8,6,32"
 )
 
 TP=4
@@ -94,7 +93,7 @@ epoch_num=$(basename "$draft_model_path")
 
 export SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1
 
-CUDA_VISIBLE_DEVICES=4,5,6,7 python3 ../evaluation_script/sglang_eagle3.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3 python3 ../evaluation_script/sglang_eagle3.py \
     --model-path $target_model_path \
     --speculative-draft-model-path $draft_model_path \
     --port 40040 \
@@ -103,4 +102,4 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 python3 ../evaluation_script/sglang_eagle3.py \
     --tp-size $TP \
     --config-list "${config_list[@]}" \
     --benchmark-list frontier_reporter:8 \
-    --output ../../result/eagle_sglang_baseline_cuda_graph/reporter_tp${TP}_ba48.jsonl 
+    --output ../../result/eagle_sglang_v1_cuda_graph/reporter_tp${TP}_ba48.jsonl

@@ -280,7 +280,7 @@ class RequestFuncObject:
     model_name: str
     system_prompt: Optional[str]
     temperature: float = 0.0
-    max_tokens: int = 131072
+    max_tokens: int = 32768
     output_conversations: Optional[List[Dict[str, str]]] = None
     output_tokens: int = 0
     error: Optional[str] = None
@@ -348,7 +348,7 @@ async def run_benchmark(
             model_name=server_args.model_path,
             system_prompt=SYSTEM_PROMPT,
             temperature=0.0,
-            max_tokens=131072,
+            max_tokens=32768,
         )
         tasks.append(
             asyncio.create_task(
