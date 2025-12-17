@@ -22,7 +22,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python3 bench_model_speedup.py \
     --trust-remote-code \
     --mem-fraction-static 0.8 \
     --tp-size 4 \
-    --attention-backend flashinfer \
+    --attention-backend fa3 \
     --config-list "${config_list[@]}" \
     --benchmark-list mtbench:80 gsm8k:200 humaneval:200 math500:200 ceval:200 cmmlu:200 \
     --output lmsys_gpt-oss-120b_Eagle3_result.jsonl
@@ -208,7 +208,6 @@ def launch_sglang_server(
     steps: int,
     topk: int,
     num_draft_tokens: int,
-    disable_cuda_graph: bool = False,
 ):
     sglang_args: List[str] = []
     if steps > 0:
@@ -256,10 +255,6 @@ def launch_sglang_server(
 
     if server_args.quantization:
         sglang_args.extend(["--quantization", server_args.quantization])
-
-    if disable_cuda_graph:
-        sglang_args.extend(["--disable-cuda-graph"])
-
     process = popen_launch_server(
         server_args.model_path,
         base_url,
@@ -280,22 +275,23 @@ class RequestFuncObject:
     model_name: str
     system_prompt: Optional[str]
     temperature: float = 0.0
-    max_tokens: int = 32768
+    max_tokens: int = 2048
     output_conversations: Optional[List[Dict[str, str]]] = None
     output_tokens: int = 0
     error: Optional[str] = None
 
 
 async def build_conversation(
-    req_obj: RequestFuncObject, client: AsyncOpenAI, pbar: Optional[tqdm] = None,
+    req_obj: RequestFuncObject, client: AsyncOpenAI, pbar: Optional[tqdm] = None
 ) -> str:
     messages = []
     # if req_obj.system_prompt is not None and len(req_obj.system_prompt) > 0:
     #     messages.append({"role": "system", "content": req_obj.system_prompt})
     start_timestamp = time.perf_counter()
     req_obj.output_tokens = 0
-        
     for conversation in req_obj.input_conversations:
+        # if conversation["role"] == "assistant":
+            # continue
         messages.append(conversation)
         if conversation["role"] == "user":
             # breakpoint()
@@ -305,9 +301,8 @@ async def build_conversation(
                     messages=messages,
                     max_tokens=req_obj.max_tokens,
                     temperature=req_obj.temperature,
-                    top_p=1.0,
-                )    
-                
+                    stream=False,
+                )
                 response_text = response.choices[0].message.content
                 req_obj.output_tokens += response.usage.completion_tokens
             except Exception as e:
@@ -360,39 +355,6 @@ async def run_benchmark(
 
     outputs = await asyncio.gather(*tasks)
     return outputs
-
-
-async def run_warmup(
-    server_args: ServerArgs,
-    client: AsyncOpenAI,
-    num_warmup: int = 3,
-):
-    """Run warmup requests to trigger CUDA graph capture and compilation."""
-    print(f"Running {num_warmup} warmup requests to capture CUDA graphs...")
-    warmup_messages = [
-        [{"role": "user", "content": "Hello, how are you?"}],
-        [{"role": "user", "content": "What is 2 + 2?"}],
-        [{"role": "user", "content": "Tell me a short joke."}],
-    ]
-    
-    tasks = []
-    for i in range(num_warmup):
-        req_obj = RequestFuncObject(
-            conversation_id=f"warmup_{i}",
-            input_conversations=warmup_messages[i % len(warmup_messages)],
-            model_name=server_args.model_path,
-            system_prompt=SYSTEM_PROMPT,
-            temperature=0.0,
-            max_tokens=128,  # Short output for warmup
-        )
-        tasks.append(
-            asyncio.create_task(
-                build_conversation(req_obj=req_obj, client=client, pbar=None)
-            )
-        )
-    
-    await asyncio.gather(*tasks)
-    print("Warmup completed.")
 
 
 def send_flush_cache_request(base_url: str):
@@ -487,16 +449,8 @@ def main():
 
     for batch_size, steps, topk, num_draft_tokens in configs:
         process = launch_sglang_server(
-            server_args, base_url, batch_size, steps, topk, num_draft_tokens,
-            disable_cuda_graph=args.disable_cuda_graph
+            server_args, base_url, batch_size, steps, topk, num_draft_tokens
         )
-        
-        # Run warmup to capture CUDA graphs before benchmark
-        print(f"Config: batch_size={batch_size}, steps={steps}, topk={topk}, num_draft_tokens={num_draft_tokens}")
-        asyncio.run(run_warmup(server_args, client, num_warmup=3))
-        send_flush_cache_request(base_url)
-        time.sleep(2)  # Wait a bit after warmup
-        
         for bench_name, conversation_list in bench_conversations.items():
             semaphore = asyncio.Semaphore(batch_size)
             start_timestamp = time.perf_counter()
@@ -517,7 +471,6 @@ def main():
             else:
                 # steps == 0 means no speculative algorithm is used
                 acc_length = 1.0
-            
             record = {
                 "batch_size": batch_size,
                 "steps": steps,
@@ -529,10 +482,11 @@ def main():
                 "avg_duration": float(f"{avg_duration:.2f}"),
                 "completion_tokens": completion_tokens,
                 "total_duration": float(f"{total_duration:.2f}"),
-                "throughput": float(f"{completion_tokens / total_duration:.2f}"),  # Including prefill
-                "benchmark": bench_name,    
+                "throughput": float(
+                    f"{(completion_tokens) / total_duration:.2f}"
+                ),
+                "benchmark": bench_name,
             }
-            
             send_flush_cache_request(base_url)
             with open(args.output, "a") as fout:
                 fout.write(json.dumps(record) + "\n")
