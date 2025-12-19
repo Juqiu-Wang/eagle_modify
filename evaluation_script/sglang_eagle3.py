@@ -247,6 +247,9 @@ def launch_sglang_server(
     if server_args.disable_radix_cache:
         sglang_args.extend(["--disable-radix-cache"])
 
+    if server_args.disable_cuda_graph:
+        sglang_args.extend(["--disable-cuda-graph"])
+
     if server_args.ep_size:
         sglang_args.extend(["--ep-size", str(server_args.ep_size)])
 

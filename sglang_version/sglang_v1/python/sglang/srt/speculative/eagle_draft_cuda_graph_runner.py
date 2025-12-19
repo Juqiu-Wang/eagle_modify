@@ -306,30 +306,16 @@ class EAGLEDraftCudaGraphRunner:
             # [新增] 临时修改 worker 的步数以匹配当前录制的图
             original_worker_steps = self.eagle_worker.speculative_num_steps
 
-            # [Fix 1] 备份原始的 token 数量配置
-            original_worker_draft_tokens = self.eagle_worker.speculative_num_draft_tokens
-
             self.eagle_worker.speculative_num_steps = current_steps
             
-            # [Fix 2] 动态调整 draft_tokens 数量，防止 k out of range
-            # 计算当前步数下可用的最大候选 tokens 数量
-            # EAGLE 树结构：Step 0 生成 topk 个，后续每步生成 topk^2 个
-            # 总候选数 = topk + (current_steps - 1) * topk^2
-            # num_draft_tokens = 总候选数 + 1
-            max_available_candidates = self.topk + (current_steps - 1) * (self.topk ** 2)
-            max_draft_tokens = max_available_candidates + 1
-            dynamic_draft_tokens = min(max_draft_tokens, original_worker_draft_tokens)
-            
-            if current_steps < original_worker_steps:
-                self.eagle_worker.speculative_num_draft_tokens = dynamic_draft_tokens
+            # [重要] CUDA Graph录制时，始终使用最大的draft_token_num
+            # 这样所有步数的图输出尺寸一致，便于replay时统一处理
+            # draft_forward会自动处理当前步数下候选token不足的情况（通过padding）
 
             ret = self.eagle_worker.draft_forward(forward_batch)
             
-            # [新增] 恢复 worker 步数和 draft tokens
+            # 恢复 worker 步数
             self.eagle_worker.speculative_num_steps = original_worker_steps
-
-            # [Fix 3] 恢复原始 token 数量
-            self.eagle_worker.speculative_num_draft_tokens = original_worker_draft_tokens
 
             forward_batch.out_cache_loc = output_cache_loc_backup
             forward_batch.spec_info.hidden_states = hidden_states_backup
@@ -362,6 +348,7 @@ class EAGLEDraftCudaGraphRunner:
         self.deepep_adapter.replay()
 
         # [新增] 根据传入的 step 选择对应的图集合，处理 step 为 None 的情况
+        requested_step = step  # 保存原始请求的步数用于日志
         if step is None:
             step = self.speculative_num_steps
         elif step not in self.graphs_by_step:
@@ -374,10 +361,17 @@ class EAGLEDraftCudaGraphRunner:
             else:
                 # 如果没有更大的，使用最大的
                 step = max(available_steps)
+            
+            # 仅在步数不匹配时输出debug日志
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"EAGLE CUDA Graph: 请求步数 {requested_step} 没有对应的图，"
+                    f"使用 step={step} 的图 (可用: {available_steps})"
+                )
         
         # 临时将 self.graphs 指向当前 step 的图，以便 _replay 调用
         self.graphs = self.graphs_by_step[step]
-        self.output_buffers = self.output_buffers_by_step[step] # [新增] 指向正确步骤的输出缓冲区
+        self.output_buffers = self.output_buffers_by_step[step]
 
 
         raw_bs = forward_batch.batch_size

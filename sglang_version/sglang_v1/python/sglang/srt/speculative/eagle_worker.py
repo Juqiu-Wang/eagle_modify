@@ -514,11 +514,12 @@ class EAGLEWorker(TpModelWorker):
         self.current_draft_steps = current_step
         
         # [新增] 日志输出：当前的平均接受长度和选择的步数
-        logger.info(
-            f"EAGLE动态步数 - 平均接受长度(draft tokens): {self.avg_acc_len:.2f}, "
-            f"选择步数: {current_step}/{self.speculative_num_steps}, "
-            f"batch_size: {forward_batch.batch_size}"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"EAGLE动态步数 - 平均接受长度(draft tokens): {self.avg_acc_len:.2f}, "
+                f"选择步数: {current_step}/{self.speculative_num_steps}, "
+                f"batch_size: {forward_batch.batch_size}"
+            )
 
         can_cuda_graph = self.cuda_graph_runner and self.cuda_graph_runner.can_run(
             forward_batch
@@ -774,17 +775,14 @@ class EAGLEWorker(TpModelWorker):
             self.avg_acc_len = (1 - self.ema_alpha) * self.avg_acc_len + self.ema_alpha * current_batch_avg
             
             # [新增] 日志输出：验证阶段的接受长度统计
-            logger.info(
-                f"EAGLE验证结果 - 本批次平均接受长度(draft tokens): {current_batch_avg:.2f}, "
-                f"接受长度详情: {res.accept_length_per_req_cpu}, "
-                f"实际生成tokens数: {[l+1 for l in res.accept_length_per_req_cpu]}, "
-                f"EMA更新: {old_avg:.2f} -> {self.avg_acc_len:.2f}"
-            )
-
-        # [新增] 日志输出：验证阶段的动态采样步数
-        logger.info(
-            f"EAGLE验证结果 - 当前动态采样步数: {spec_info.spec_steps}"
-        )
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"EAGLE验证结果 - 本批次平均接受长度(draft tokens): {current_batch_avg:.2f}, "
+                    f"接受长度详情: {res.accept_length_per_req_cpu}, "
+                    f"实际生成tokens数: {[l+1 for l in res.accept_length_per_req_cpu]}, "
+                    f"EMA更新: {old_avg:.2f} -> {self.avg_acc_len:.2f}, "
+                    f"动态步数: {spec_info.spec_steps}"
+                )
 
         # Post process based on verified outputs.
         # Pick indices that we care (accepted)
