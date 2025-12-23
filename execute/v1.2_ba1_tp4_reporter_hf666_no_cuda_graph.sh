@@ -1,6 +1,7 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_DIR=$(dirname $SCRIPT_DIR)
 
+
 target_model_path="/mnt/geminihzceph1/geminicephfs/mmsearch-luban-universal/hz/group_airesearch_1/users/juqiuwang/models/hf_iterr_666"
 #draft_model_path=${ROOT_DIR}/outputs/QwQ-32B-eagle3/epoch_9
 # draft_model_path=${ROOT_DIR}/outputs/QwQ-32B-eagle3_v1/epoch_0
@@ -20,15 +21,13 @@ draft_model_path="/mnt/geminihzceph1/geminicephfs/mmsearch-luban-universal/hz/gr
 #    "1,3,2,7"
 #    "1,4,2,9"
 config_list=(
-    "1,0,0,0"
-    "1,6,4,16"
-    "1,7,4,20"
-    "1,8,6,32"
+#    "1,0,0,0"
+#    "1,6,4,16"
+#    "1,7,4,20"
+#    "1,8,6,32"
     "1,8,4,16"
-    "1,8,4,20"
     "1,10,4,16"
-    "1,10,4,20"
-    "1,10,6,16"
+#    "1,10,6,16"
     "1,10,6,32"
 )
 
@@ -40,11 +39,11 @@ export SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1
 CUDA_VISIBLE_DEVICES=4,5,6,7 python3 ../evaluation_script/sglang_eagle3.py \
     --model-path $target_model_path \
     --speculative-draft-model-path $draft_model_path \
-    --port 40040 \
+    --port 40070 \
     --trust-remote-code \
     --disable-cuda-graph \
     --mem-fraction-static 0.9 \
     --tp-size $TP \
     --config-list "${config_list[@]}" \
-    --benchmark-list frontier_reporter:8 \
+    --benchmark-list frontier_reporter:1 \
     --output ../../result/eagle_sglang_v1.2_no_cuda_graph/hf666_reporter_ba1_tp4.jsonl 

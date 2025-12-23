@@ -21,7 +21,12 @@ draft_model_path="/mnt/geminihzceph1/geminicephfs/mmsearch-luban-universal/hz/gr
 #    "1,4,2,9"
 config_list=(
 #    "1,0,0,0"
-    "1,6,4,20"
+#    "1,6,4,16"
+    "1,8,6,32"
+#    "1,8,4,16"
+#    "1,10,4,16"
+#    "1,10,6,16"
+#    "1,10,6,32"
 )
 
 TP=4
@@ -38,5 +43,5 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python3 ../evaluation_script/sglang_eagle3.py \
     --mem-fraction-static 0.9 \
     --tp-size $TP \
     --config-list "${config_list[@]}" \
-    --benchmark-list frontier_reporter:2 \
+    --benchmark-list frontier_reporter:8 \
     --output ../../result/debug.jsonl 

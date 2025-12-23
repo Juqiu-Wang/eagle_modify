@@ -24,11 +24,9 @@ config_list=(
 #    "1,6,4,16"
 #    "1,7,4,28"
 #    "1,8,6,32"
-#    "1,8,4,16"
+    "1,8,4,16"
 #    "1,8,4,32"
     "1,10,4,16"
-    "1,10,4,32"
-    "1,10,6,16"
     "1,10,6,32"
 )
 
@@ -47,4 +45,4 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python3 ../evaluation_script/sglang_eagle3.py \
     --tp-size $TP \
     --config-list "${config_list[@]}" \
     --benchmark-list frontier_reporter:8 \
-    --output ../../result/eagle_sglang_baseline_cuda_graph/hf666_reporter_tp${TP}_ba1.jsonl 
+    --output ../../result/eagle_sglang_baseline_no_cuda_graph/hf666_reporter_tp${TP}_ba1.jsonl 
