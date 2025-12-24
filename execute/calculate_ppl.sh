@@ -24,12 +24,12 @@ draft_model_path="/mnt/geminihzceph1/geminicephfs/mmsearch-luban-universal/hz/gr
 config_list=(
 #    "1,0,0,0"
 #    "1,6,4,16"
-#    "1,7,4,28"
+#    "1,7,4,20"
 #    "1,8,6,32"
-    "1,8,4,16"
-#    "1,8,4,32"
-    "1,10,4,16"
-    "1,10,6,32"
+    "1,12,4,16"
+#    "1,10,4,16"
+#    "1,10,6,16"
+#    "1,10,6,32"
 )
 
 TP=4
@@ -40,11 +40,11 @@ export SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1
 CUDA_VISIBLE_DEVICES=0,1,2,3 python3 ../evaluation_script/sglang_eagle3.py \
     --model-path $target_model_path \
     --speculative-draft-model-path $draft_model_path \
-    --port 40000 \
+    --port 40070 \
     --trust-remote-code \
     --disable-cuda-graph \
     --mem-fraction-static 0.9 \
     --tp-size $TP \
     --config-list "${config_list[@]}" \
-    --benchmark-list frontier_reporter:8 \
-    --output ../../result/eagle_sglang_baseline_no_cuda_graph/hf666_reporter_tp${TP}_ba1.jsonl 
+    --benchmark-list frontier_reporter:1 \
+    --output ../../result/eagle_sglang_v1.2_no_cuda_graph/hf666_reporter_ba1_tp4.jsonl 
