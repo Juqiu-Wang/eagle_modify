@@ -46,4 +46,4 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python3 ../evaluation_script/sglang_eagle3.py \
     --tp-size $TP \
     --config-list "${config_list[@]}" \
     --benchmark-list frontier_reporter:1 \
-    --output ../../result/eagle_sglang_v2.1_no_cuda_graph/hf666_reporter_ba1_tp4.jsonl 
+    --output ../../result/eagle_sglang_v2.2_no_cuda_graph/hf666_reporter_ba1_tp4.jsonl 

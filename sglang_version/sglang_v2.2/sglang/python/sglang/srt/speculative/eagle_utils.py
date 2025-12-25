@@ -21,10 +21,24 @@ def organize_draft_results(
     token_list: List[torch.Tensor],
     parents_list: List[torch.Tensor],
     num_draft_token: int,
+    return_scores: bool = True,
 ):
-    score_list = torch.cat(score_list, dim=1).flatten(1)
+    """Organize draft results and optionally return scores.
+    
+    Args:
+        score_list: List of score tensors from each draft step
+        token_list: List of token tensors from each draft step
+        parents_list: List of parent indices from each draft step
+        num_draft_token: Number of draft tokens to select
+        return_scores: If True, also return draft_token_scores (P1 optimization)
+    
+    Returns:
+        parent_list, top_scores_index, draft_tokens[, draft_token_scores]
+    """
+    # [P1 Optimization] Fuse score gathering with token gathering
+    flattened_scores = torch.cat(score_list, dim=1).flatten(1)
     ss_token_list = torch.cat(token_list, dim=1)
-    top_scores = torch.topk(score_list, num_draft_token - 1, dim=-1)
+    top_scores = torch.topk(flattened_scores, num_draft_token - 1, dim=-1)
     top_scores_index = top_scores.indices
     top_scores_index = torch.sort(top_scores_index).values
     draft_tokens = torch.gather(ss_token_list, index=top_scores_index, dim=1)
@@ -35,7 +49,12 @@ def organize_draft_results(
         batch_size = parents_list[0].shape[0]
         parent_list = torch.empty(batch_size, 0, device=parents_list[0].device)
 
-    return parent_list, top_scores_index, draft_tokens
+    if return_scores:
+        # Reuse top_scores_index to gather scores (avoid redundant gather in caller)
+        draft_token_scores = torch.gather(flattened_scores, 1, top_scores_index)
+        return parent_list, top_scores_index, draft_tokens, draft_token_scores
+    else:
+        return parent_list, top_scores_index, draft_tokens
 
 
 class TreeMaskMode(IntEnum):

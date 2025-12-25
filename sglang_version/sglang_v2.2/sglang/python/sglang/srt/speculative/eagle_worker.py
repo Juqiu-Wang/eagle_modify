@@ -577,29 +577,25 @@ class EAGLEWorker(TpModelWorker):
                 self.speculative_num_draft_tokens,
             )
 
-        # [Dynamic Steps v2] Pad draft_tokens and top_scores_index to full size if early stopped
-        # build_tree_kernel_efficient expects draft_tokens to have (num_verify_tokens - 1) tokens
+        # [P3 Optimization] Use F.pad for efficient padding (better than cat)
         expected_draft_len = self.speculative_num_draft_tokens - 1
         actual_draft_len = draft_tokens.shape[1]
         if actual_draft_len < expected_draft_len:
-            bs = draft_tokens.shape[0]
-            # Pad draft_tokens with zeros (will be masked out in verify)
             pad_len = expected_draft_len - actual_draft_len
-            draft_tokens = torch.cat([
-                draft_tokens,
-                torch.zeros(bs, pad_len, dtype=draft_tokens.dtype, device=draft_tokens.device)
-            ], dim=1)
-            # Pad top_scores_index with -1 (invalid indices)
-            top_scores_index = torch.cat([
-                top_scores_index,
-                torch.full((bs, pad_len), -1, dtype=top_scores_index.dtype, device=top_scores_index.device)
-            ], dim=1)
-            # Pad draft_token_scores with zeros (padding tokens won't be accepted anyway)
+            # F.pad is more efficient than creating tensors and cat
+            # Pad format: (left, right, top, bottom, ...) for last to first dimension
+            draft_tokens = torch.nn.functional.pad(
+                draft_tokens, (0, pad_len), mode='constant', value=0
+            )
+            # Pad top_scores_index with -1
+            top_scores_index = torch.nn.functional.pad(
+                top_scores_index, (0, pad_len), mode='constant', value=-1
+            )
+            # Pad draft_token_scores with zeros
             if self.last_draft_token_scores is not None:
-                self.last_draft_token_scores = torch.cat([
-                    self.last_draft_token_scores,
-                    torch.zeros(bs, pad_len, dtype=self.last_draft_token_scores.dtype, device=self.last_draft_token_scores.device)
-                ], dim=1)
+                self.last_draft_token_scores = torch.nn.functional.pad(
+                    self.last_draft_token_scores, (0, pad_len), mode='constant', value=0.0
+                )
 
         # [Dynamic Steps v2] Always pad to full speculative_num_draft_tokens for verify
         # This ensures consistent verify batch sizes regardless of early stopping
@@ -672,6 +668,10 @@ class EAGLEWorker(TpModelWorker):
         token_list: List[torch.Tensor] = []
         parents_list: List[torch.Tensor] = []
 
+        # [P2 Optimization] Precompute early stop threshold
+        # Convert: max(-log(score)) > avg_throughput  =>  max_score < exp(-avg_throughput)
+        early_stop_threshold = math.exp(-self.avg_throughput)
+        
         # Forward multiple steps with early stopping
         scores = None
         actual_steps = 0
@@ -684,16 +684,14 @@ class EAGLEWorker(TpModelWorker):
             parents_list.append(tree_info[2])
             actual_steps = i + 1
 
-            # [Dynamic Steps v2] Check early stopping condition
-            # Stop if max(-log(score)) exceeds avg_throughput threshold
-            if scores is not None and scores.numel() > 0:
+            # [P2 Optimization] Early stopping with precomputed threshold
+            # Check: max_score < exp(-avg_throughput) instead of max(-log(score)) > avg_throughput
+            if scores is not None and scores.numel() > 0 and i >= 1:
                 # scores shape: (batch, topk) - cumulative probabilities
                 max_score = scores.max().item()
-                if max_score > 0:
-                    max_neg_log_score = -torch.log(torch.tensor(max_score)).item()
-                    if max_neg_log_score > self.avg_throughput and i >= 1:
-                        # Early stop: enough uncertainty accumulated
-                        break
+                if 0 < max_score < early_stop_threshold:
+                    # Early stop: uncertainty exceeds threshold
+                    break
 
             # We don't need to run the last forward
             if i == self.speculative_num_steps - 1:
@@ -723,21 +721,13 @@ class EAGLEWorker(TpModelWorker):
                 topk_index = self.hot_token_id[topk_index]
             hidden_states = logits_output.hidden_states
 
-        # [Dynamic Steps v2] Calculate actual available candidates
-        # When early stopping, we may have fewer tokens than speculative_num_draft_tokens
+        # [P1 Optimization] Use fused organize_draft_results to get both tokens and scores
+        # This avoids redundant cat+flatten+gather operations
         actual_candidates = sum(s.shape[1] for s in score_list)
-        # organize_draft_results selects (num_draft_token - 1) tokens
-        # So we need to pass min(actual_candidates + 1, speculative_num_draft_tokens)
         num_to_organize = min(actual_candidates + 1, self.speculative_num_draft_tokens)
-        parent_list, top_scores_index, draft_tokens = organize_draft_results(
-            score_list, token_list, parents_list, num_to_organize
+        parent_list, top_scores_index, draft_tokens, draft_token_scores = organize_draft_results(
+            score_list, token_list, parents_list, num_to_organize, return_scores=True
         )
-
-        # [Dynamic Steps v2] Compute draft_token_scores aligned with draft_tokens
-        # top_scores_index contains the indices of selected candidates in the flattened score tensor
-        flattened_scores = torch.cat(score_list, dim=1).flatten(1)  # (batch_size, total_candidates)
-        # Gather scores corresponding to the selected draft tokens
-        draft_token_scores = torch.gather(flattened_scores, 1, top_scores_index)  # (batch_size, num_draft_tokens - 1)
 
         return parent_list, top_scores_index, draft_tokens, actual_steps, draft_token_scores
 
@@ -810,68 +800,79 @@ class EAGLEWorker(TpModelWorker):
         )
 
         # [Dynamic Steps v2] Update avg_throughput using -log(score) of last accepted token
-        # Use the cumulative probability score of the last accepted token on the accepted path
+        # [P0 Optimization] Vectorized computation - no Python loops, single GPU-CPU sync at the end
         if len(res.accept_length_per_req_cpu) > 0 and self.last_draft_token_scores is not None:
             # self.last_draft_token_scores: (batch_size, draft_token_num - 1)
-            # This tensor is aligned with draft_tokens, so we can use accept_index to look up scores
-            # 
-            # res.accepted_indices contains the flatten indices of accepted tokens in the verify batch
-            # For each request, the indices are in range [req_idx * draft_token_num, (req_idx + 1) * draft_token_num)
-            # The first accepted index (position 0) is the verified_id from previous step, not a draft token
-            # So draft token indices start from position 1
-            #
-            # If accept_len = 3, it means 3 draft tokens were accepted (not including bonus token)
-            # The last accepted draft token's index in draft_tokens is at position (accept_len - 1) relative to the request
-            # But in accepted_indices, it's at position accept_len (because position 0 is verified_id)
+            # res.accepted_indices: (total_accepted_tokens,) - flattened indices in verify batch
+            # res.accept_length_per_req_cpu: List[int] - number of draft tokens accepted per request
             
             draft_token_num = spec_info.draft_token_num
-            total_throughput = 0.0
-            valid_count = 0
+            batch_size = len(res.accept_length_per_req_cpu)
+            device = self.last_draft_token_scores.device
             
-            # Build a mapping from verify batch index to draft_tokens index
-            # In verify batch: [verified_id, draft_token_0, draft_token_1, ...]
-            # draft_token_i in verify batch is at position (i + 1)
-            # So for a verify index v (relative to request), the draft_token index is (v - 1)
+            # Convert accept_length_per_req_cpu to GPU tensor
+            accept_lengths = torch.tensor(
+                res.accept_length_per_req_cpu, dtype=torch.int64, device=device
+            )  # (batch_size,)
             
-            accepted_indices_flat = res.accepted_indices.tolist()
-            idx_ptr = 0
+            # Compute cumulative sum to locate the last accepted token for each request
+            # cumsum[i] gives the total number of accepted tokens (including verified_id) up to request i
+            num_accepted_per_req = accept_lengths + 1  # +1 for verified_id
+            cumsum_accepted = torch.cumsum(num_accepted_per_req, dim=0)  # (batch_size,)
             
-            for req_idx, accept_len in enumerate(res.accept_length_per_req_cpu):
-                # Number of tokens accepted for this request (including verified_id as first)
-                num_accepted = accept_len + 1  # accept_len draft tokens + 1 verified_id
-                
-                if accept_len > 0:
-                    # Get the last accepted token's index in verify batch (relative to this request)
-                    last_accepted_verify_idx = accepted_indices_flat[idx_ptr + num_accepted - 1]
-                    # Convert to relative index within this request's verify tokens
-                    relative_verify_idx = last_accepted_verify_idx - req_idx * draft_token_num
-                    # Convert to draft_tokens index: subtract 1 because verified_id is at position 0
-                    draft_token_idx = relative_verify_idx - 1
-                    
-                    if 0 <= draft_token_idx < self.last_draft_token_scores.shape[1]:
-                        end_score = self.last_draft_token_scores[req_idx, draft_token_idx].item()
-                        current_throughput = -math.log(max(end_score, 1e-10))
-                    else:
-                        current_throughput = 0.0
-                else:
-                    current_throughput = 0.0
-                
-                total_throughput += current_throughput
-                valid_count += 1
-                idx_ptr += num_accepted
+            # Indices of the last accepted token for each request in res.accepted_indices
+            # For request i: last_token_idx = cumsum_accepted[i] - 1
+            last_token_indices = cumsum_accepted - 1  # (batch_size,)
             
-            if valid_count > 0:
-                avg_current_throughput = total_throughput / valid_count
-                old_throughput = self.avg_throughput
-                self.avg_throughput = (1 - self.ema_alpha) * self.avg_throughput + self.ema_alpha * avg_current_throughput
-                
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        f"EAGLE Verify - accept_lengths: {res.accept_length_per_req_cpu}, "
-                        f"avg_current_throughput: {avg_current_throughput:.3f}, "
-                        f"avg_throughput: {old_throughput:.3f} -> {self.avg_throughput:.3f}, "
-                        f"actual_spec_steps: {spec_info.actual_spec_steps}"
-                    )
+            # Gather the last accepted verify batch index for each request
+            last_accepted_verify_indices = res.accepted_indices[last_token_indices]  # (batch_size,)
+            
+            # Convert verify batch indices to request-local indices
+            # Each request's verify tokens span [req_idx * draft_token_num, (req_idx+1) * draft_token_num)
+            req_indices = torch.arange(batch_size, dtype=torch.int64, device=device)
+            relative_verify_indices = last_accepted_verify_indices - req_indices * draft_token_num
+            
+            # Convert to draft_tokens indices (subtract 1 because verified_id is at position 0)
+            draft_token_indices = relative_verify_indices - 1  # (batch_size,)
+            
+            # Create a mask for entries with accept_len > 0 and valid indices
+            # Note: accept_len = 0 is meaningful and contributes 0.0 to throughput for correction
+            has_accepted_mask = (accept_lengths > 0) & (draft_token_indices >= 0) & (
+                draft_token_indices < self.last_draft_token_scores.shape[1]
+            )  # (batch_size,)
+            
+            # Clamp indices to valid range to avoid gather errors (invalid entries will be masked out)
+            draft_token_indices_clamped = torch.clamp(
+                draft_token_indices, 0, self.last_draft_token_scores.shape[1] - 1
+            )
+            
+            # Gather scores for the last accepted draft token of each request
+            # Use advanced indexing: scores[req_idx, draft_token_indices[req_idx]]
+            end_scores = self.last_draft_token_scores[
+                req_indices, draft_token_indices_clamped
+            ]  # (batch_size,)
+            
+            # Apply mask and compute -log(score) only for entries with accept_len > 0
+            end_scores_clamped = torch.clamp(end_scores, min=1e-10)  # Prevent log(0)
+            throughputs = -torch.log(end_scores_clamped)  # (batch_size,)
+            
+            # Mask: use actual throughput for accepted tokens, 0.0 for non-accepted (accept_len=0)
+            # This allows accept_len=0 to contribute 0.0 to the average for throughput correction
+            throughputs_masked = torch.where(has_accepted_mask, throughputs, torch.zeros_like(throughputs))
+            
+            # Compute average over ALL requests (including accept_len=0 which contributes 0.0)
+            # Single GPU-CPU sync point here
+            avg_current_throughput = throughputs_masked.sum().item() / batch_size
+            old_throughput = self.avg_throughput
+            self.avg_throughput = (1 - self.ema_alpha) * self.avg_throughput + self.ema_alpha * avg_current_throughput
+            
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"EAGLE Verify - accept_lengths: {res.accept_length_per_req_cpu}, "
+                    f"avg_current_throughput: {avg_current_throughput:.3f}, "
+                    f"avg_throughput: {old_throughput:.3f} -> {self.avg_throughput:.3f}, "
+                    f"actual_spec_steps: {spec_info.actual_spec_steps}"
+                )
 
         # Post process based on verified outputs.
         # Pick indices that we care (accepted)
